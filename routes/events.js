@@ -1,7 +1,7 @@
 import express from 'express';
 import Event from '../models/Event.js';
 import User from '../models/User.js';
-
+import mongoose from 'mongoose';
 const router = express.Router();
 
 // Get all events with filtering and pagination
