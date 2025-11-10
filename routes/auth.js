@@ -8,34 +8,24 @@ router.post('/sync-user', async (req, res) => {
   try {
     const { uid, email, displayName, photoURL } = req.body;
     
-    console.log('📥 Sync user request received:', { uid, email, displayName });
+    console.log('📥 Sync user request:', { uid, email });
 
-    // Validate required fields
     if (!uid || !email || !displayName) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: uid, email, displayName' 
-      });
+      return res.status(400).json({ error: 'Missing required fields' });
     }
 
     const MONGODB_URI = process.env.MONGODB_URI;
     
     if (!MONGODB_URI) {
-      return res.status(500).json({ 
-        error: 'Server configuration error: MONGODB_URI not set' 
-      });
+      return res.status(500).json({ error: 'Database not configured' });
     }
 
-    // Connect to MongoDB if not connected
+    // Connect to MongoDB
     if (mongoose.connection.readyState !== 1) {
-      console.log('🔄 Connecting to MongoDB...');
-      await mongoose.connect(MONGODB_URI, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
-      });
-      console.log('✅ MongoDB connected for user sync');
+      await mongoose.connect(MONGODB_URI);
     }
 
-    // Prepare user data
+    // User data
     const userData = {
       uid: uid,
       email: email,
@@ -44,9 +34,7 @@ router.post('/sync-user', async (req, res) => {
       updatedAt: new Date()
     };
 
-    console.log('💾 Saving user data to MongoDB...');
-
-    // Use updateOne with upsert to create or update user
+    // Upsert user
     const result = await mongoose.connection.db.collection('users').updateOne(
       { uid: uid },
       { 
@@ -56,8 +44,6 @@ router.post('/sync-user', async (req, res) => {
       { upsert: true }
     );
 
-    console.log('✅ User saved successfully:', result);
-
     res.status(200).json({
       message: 'User synced successfully',
       user: userData,
@@ -65,7 +51,7 @@ router.post('/sync-user', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Error in sync-user:', error);
+    console.error('Error syncing user:', error);
     res.status(500).json({ 
       error: 'Failed to sync user',
       details: error.message 
@@ -74,7 +60,7 @@ router.post('/sync-user', async (req, res) => {
 });
 
 // Get user profile
-router.get('/profile/:uid', async (req, res) => {
+router.get('/user/:uid', async (req, res) => {
   try {
     const { uid } = req.params;
     
@@ -95,8 +81,8 @@ router.get('/profile/:uid', async (req, res) => {
 
     res.status(200).json({ user });
   } catch (error) {
-    console.error('Error fetching user profile:', error);
-    res.status(500).json({ error: 'Failed to fetch user profile' });
+    console.error('Error fetching user:', error);
+    res.status(500).json({ error: 'Failed to fetch user' });
   }
 });
 
