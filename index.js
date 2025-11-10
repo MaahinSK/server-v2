@@ -2,13 +2,22 @@ import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
 
 const app = express();
 
+// FIX: Add trust proxy for Vercel
+app.set('trust proxy', 1);
+
+// Security middleware
 app.use(helmet());
-app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 100 }));
-app.use(cors({ origin: true, credentials: true }));
+
+// CORS configuration
+app.use(cors({
+  origin: true,
+  credentials: true,
+}));
+
+// Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -16,13 +25,13 @@ const MONGODB_URI = process.env.MONGODB_URI;
 
 // Simple connection
 async function connectDB() {
-  if (mongoose.connection.readyState !== 1) {
+  if (mongoose.connection.readyState !== 1 && MONGODB_URI) {
     await mongoose.connect(MONGODB_URI);
     console.log('✅ MongoDB connected');
   }
 }
 
-// Import and use routes directly
+// Import and use routes
 import authRoutes from './routes/auth.js';
 import eventRoutes from './routes/events.js'; 
 import userRoutes from './routes/users.js';
@@ -31,18 +40,44 @@ app.use('/api/auth', authRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/users', userRoutes);
 
-// Simple test endpoint
-app.get('/api/test', async (req, res) => {
+// Health check
+app.get('/api/health', async (req, res) => {
   await connectDB();
-  const result = await mongoose.connection.db.collection('tests').insertOne({ test: true, time: new Date() });
-  res.json({ success: true, id: result.insertedId });
+  res.json({ 
+    status: 'OK', 
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    timestamp: new Date().toISOString()
+  });
 });
 
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' });
+// Test endpoint
+app.get('/api/test', async (req, res) => {
+  try {
+    await connectDB();
+    const result = await mongoose.connection.db.collection('tests').insertOne({ 
+      test: true, 
+      time: new Date(),
+      message: 'API test successful'
+    });
+    res.json({ success: true, id: result.insertedId });
+  } catch (error) {
+    res.status(500).json({ error: 'Test failed: ' + error.message });
+  }
 });
 
-app.use('*', (req, res) => res.status(404).json({ error: 'Route not found' }));
-app.use((error, req, res, next) => res.status(500).json({ error: 'Server error: ' + error.message }));
+app.get('/', (req, res) => {
+  res.json({ message: 'Helping Hands API', status: 'running' });
+});
+
+// 404 handler
+app.use('*', (req, res) => {
+  res.status(404).json({ error: 'Route not found' });
+});
+
+// Error handling
+app.use((error, req, res, next) => {
+  console.error('Server Error:', error);
+  res.status(500).json({ error: 'Internal server error' });
+});
 
 export default app;
