@@ -301,4 +301,70 @@ router.get('/user/:uid', async (req, res) => {
   }
 });
 
+router.put('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updateData = req.body;
+
+    console.log('🔄 Updating event:', id, 'with data:', updateData);
+
+    const MONGODB_URI = process.env.MONGODB_URI;
+    if (!MONGODB_URI) {
+      return res.status(500).json({ error: 'Database not configured' });
+    }
+
+    if (mongoose.connection.readyState !== 1) {
+      await mongoose.connect(MONGODB_URI);
+    }
+
+    // Find the event first
+    const event = await mongoose.connection.db.collection('events').findOne({ 
+      _id: new mongoose.Types.ObjectId(id) 
+    });
+
+    if (!event) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+
+    // Check if user is the event creator
+    if (event.creator.uid !== updateData.creator?.uid) {
+      return res.status(403).json({ error: 'Not authorized to update this event' });
+    }
+
+    // Prepare update fields
+    const updateFields = {
+      title: updateData.title,
+      description: updateData.description,
+      eventType: updateData.eventType,
+      thumbnail: updateData.thumbnail,
+      location: updateData.location,
+      eventDate: new Date(updateData.eventDate),
+      maxParticipants: parseInt(updateData.maxParticipants) || 0,
+      updatedAt: new Date()
+    };
+
+    // Update the event
+    const result = await mongoose.connection.db.collection('events').updateOne(
+      { _id: new mongoose.Types.ObjectId(id) },
+      { $set: updateFields }
+    );
+
+    console.log('✅ Event updated successfully:', result);
+
+    // Get the updated event
+    const updatedEvent = await mongoose.connection.db.collection('events').findOne({ 
+      _id: new mongoose.Types.ObjectId(id) 
+    });
+
+    res.json({
+      message: 'Event updated successfully',
+      event: updatedEvent
+    });
+
+  } catch (error) {
+    console.error('❌ Error updating event:', error);
+    res.status(500).json({ error: 'Failed to update event: ' + error.message });
+  }
+});
+
 export default router;
