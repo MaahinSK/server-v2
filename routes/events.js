@@ -95,9 +95,8 @@ router.post('/', async (req, res) => {
     
     console.log('Creating event:', title);
 
-    // REMOVE thumbnail from required fields
-    if (!title || !description || !eventType || !location || !eventDate || !creator) {
-      return res.status(400).json({ error: 'All fields except thumbnail are required' });
+    if (!title || !description || !eventType || !thumbnail || !location || !eventDate || !creator) {
+      return res.status(400).json({ error: 'All fields are required' });
     }
 
     const MONGODB_URI = process.env.MONGODB_URI;
@@ -113,7 +112,7 @@ router.post('/', async (req, res) => {
       title,
       description,
       eventType,
-      thumbnail: thumbnail || '', // Set to empty string if not provided
+      thumbnail: thumbnail || '',
       location,
       eventDate: new Date(eventDate),
       creator: {
@@ -337,7 +336,7 @@ router.put('/:id', async (req, res) => {
       title: updateData.title,
       description: updateData.description,
       eventType: updateData.eventType,
-      thumbnail: updateData.thumbnail || '',
+      thumbnail: updateData.thumbnail,
       location: updateData.location,
       eventDate: new Date(updateData.eventDate),
       maxParticipants: parseInt(updateData.maxParticipants) || 0,
