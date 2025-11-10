@@ -1,30 +1,25 @@
 import express from 'express';
-import Event from '../models/Event.js';
-import User from '../models/User.js';
 import mongoose from 'mongoose';
-
-
 
 const router = express.Router();
 
-// Get all events with filtering and pagination
+// Get all events with filtering
 router.get('/', async (req, res) => {
   try {
-    const { 
-      type, 
-      search, 
-      page = 1, 
-      limit = 12,
-      sort = 'eventDate'
-    } = req.query;
-
-    // Build filter object
-    const filter = { isActive: true };
+    const { type, search, page = 1, limit = 12 } = req.query;
     
-    if (type) {
-      filter.eventType = type;
+    const MONGODB_URI = process.env.MONGODB_URI;
+    if (!MONGODB_URI) {
+      return res.status(500).json({ error: 'Database not configured' });
     }
-    
+
+    if (mongoose.connection.readyState !== 1) {
+      await mongoose.connect(MONGODB_URI);
+    }
+
+    // Build filter
+    const filter = { isActive: true };
+    if (type) filter.eventType = type;
     if (search) {
       filter.$or = [
         { title: { $regex: search, $options: 'i' } },
@@ -33,86 +28,87 @@ router.get('/', async (req, res) => {
       ];
     }
 
-    // Calculate pagination
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
 
-    // Get events with pagination
-    const events = await Event.find(filter)
-      .sort({ [sort]: 1, createdAt: -1 })
+    // Get events
+    const events = await mongoose.connection.db.collection('events')
+      .find(filter)
+      .sort({ eventDate: 1 })
       .skip(skip)
-      .limit(limitNum);
+      .limit(limitNum)
+      .toArray();
 
-    // Get total count for pagination
-    const total = await Event.countDocuments(filter);
-    const totalPages = Math.ceil(total / limitNum);
+    const total = await mongoose.connection.db.collection('events').countDocuments(filter);
 
-    res.status(200).json({
+    res.json({
       events,
       total,
       currentPage: pageNum,
-      totalPages,
-      hasNext: pageNum < totalPages,
+      totalPages: Math.ceil(total / limitNum),
+      hasNext: pageNum < Math.ceil(total / limitNum),
       hasPrev: pageNum > 1
     });
+
   } catch (error) {
     console.error('Error fetching events:', error);
     res.status(500).json({ error: 'Failed to fetch events' });
   }
 });
 
-// Get single event by ID
+// Get single event
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ error: 'Invalid event ID' });
+    
+    const MONGODB_URI = process.env.MONGODB_URI;
+    if (!MONGODB_URI) {
+      return res.status(500).json({ error: 'Database not configured' });
     }
 
-    const event = await Event.findById(id);
+    if (mongoose.connection.readyState !== 1) {
+      await mongoose.connect(MONGODB_URI);
+    }
+
+    const event = await mongoose.connection.db.collection('events').findOne({ 
+      _id: new mongoose.Types.ObjectId(id),
+      isActive: true 
+    });
 
     if (!event) {
       return res.status(404).json({ error: 'Event not found' });
     }
 
-    if (!event.isActive) {
-      return res.status(404).json({ error: 'Event not found' });
-    }
+    res.json(event);
 
-    res.status(200).json(event);
   } catch (error) {
     console.error('Error fetching event:', error);
     res.status(500).json({ error: 'Failed to fetch event' });
   }
 });
 
-// Create new event
+// Create event
 router.post('/', async (req, res) => {
   try {
-    const {
-      title,
-      description,
-      eventType,
-      thumbnail,
-      location,
-      eventDate,
-      creator,
-      maxParticipants = 0
-    } = req.body;
+    const { title, description, eventType, thumbnail, location, eventDate, creator, maxParticipants = 0 } = req.body;
+    
+    console.log('Creating event:', title);
 
-    // Validation
     if (!title || !description || !eventType || !thumbnail || !location || !eventDate || !creator) {
       return res.status(400).json({ error: 'All fields are required' });
     }
 
-    // Check if event date is in the future
-    if (new Date(eventDate) <= new Date()) {
-      return res.status(400).json({ error: 'Event date must be in the future' });
+    const MONGODB_URI = process.env.MONGODB_URI;
+    if (!MONGODB_URI) {
+      return res.status(500).json({ error: 'Database not configured' });
     }
 
-    const event = new Event({
+    if (mongoose.connection.readyState !== 1) {
+      await mongoose.connect(MONGODB_URI);
+    }
+
+    const eventData = {
       title,
       description,
       eventType,
@@ -125,24 +121,23 @@ router.post('/', async (req, res) => {
         displayName: creator.displayName,
         photoURL: creator.photoURL || ''
       },
+      participants: [],
       maxParticipants: parseInt(maxParticipants),
-      participants: []
-    });
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
 
-    await event.save();
+    const result = await mongoose.connection.db.collection('events').insertOne(eventData);
 
     res.status(201).json({
       message: 'Event created successfully',
-      event
+      event: { ...eventData, _id: result.insertedId }
     });
+
   } catch (error) {
     console.error('Error creating event:', error);
-    
-    if (error.name === 'ValidationError') {
-      return res.status(400).json({ error: 'Invalid event data' });
-    }
-    
-    res.status(500).json({ error: 'Failed to create event' });
+    res.status(500).json({ error: 'Failed to create event: ' + error.message });
   }
 });
 
@@ -152,42 +147,50 @@ router.put('/:id', async (req, res) => {
     const { id } = req.params;
     const updateData = req.body;
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ error: 'Invalid event ID' });
+    const MONGODB_URI = process.env.MONGODB_URI;
+    if (!MONGODB_URI) {
+      return res.status(500).json({ error: 'Database not configured' });
     }
 
-    const event = await Event.findById(id);
+    if (mongoose.connection.readyState !== 1) {
+      await mongoose.connect(MONGODB_URI);
+    }
+
+    const event = await mongoose.connection.db.collection('events').findOne({ 
+      _id: new mongoose.Types.ObjectId(id) 
+    });
 
     if (!event) {
       return res.status(404).json({ error: 'Event not found' });
     }
 
-    // Check if user is the event creator
     if (event.creator.uid !== updateData.creator?.uid) {
       return res.status(403).json({ error: 'Not authorized to update this event' });
     }
 
-    // Update allowed fields
     const allowedUpdates = ['title', 'description', 'eventType', 'thumbnail', 'location', 'eventDate', 'maxParticipants'];
+    const updateFields = {};
+    
     allowedUpdates.forEach(field => {
       if (updateData[field] !== undefined) {
-        event[field] = field === 'eventDate' ? new Date(updateData[field]) : updateData[field];
+        updateFields[field] = field === 'eventDate' ? new Date(updateData[field]) : updateData[field];
       }
     });
 
-    await event.save();
+    updateFields.updatedAt = new Date();
 
-    res.status(200).json({
+    await mongoose.connection.db.collection('events').updateOne(
+      { _id: new mongoose.Types.ObjectId(id) },
+      { $set: updateFields }
+    );
+
+    res.json({
       message: 'Event updated successfully',
-      event
+      event: { ...event, ...updateFields }
     });
+
   } catch (error) {
     console.error('Error updating event:', error);
-    
-    if (error.name === 'ValidationError') {
-      return res.status(400).json({ error: 'Invalid event data' });
-    }
-    
     res.status(500).json({ error: 'Failed to update event' });
   }
 });
@@ -198,93 +201,100 @@ router.post('/:id/join', async (req, res) => {
     const { id } = req.params;
     const { user } = req.body;
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ error: 'Invalid event ID' });
-    }
-
     if (!user || !user.uid) {
       return res.status(400).json({ error: 'User data is required' });
     }
 
-    const event = await Event.findById(id);
+    const MONGODB_URI = process.env.MONGODB_URI;
+    if (!MONGODB_URI) {
+      return res.status(500).json({ error: 'Database not configured' });
+    }
+
+    if (mongoose.connection.readyState !== 1) {
+      await mongoose.connect(MONGODB_URI);
+    }
+
+    const event = await mongoose.connection.db.collection('events').findOne({ 
+      _id: new mongoose.Types.ObjectId(id),
+      isActive: true 
+    });
 
     if (!event) {
       return res.status(404).json({ error: 'Event not found' });
     }
 
-    if (!event.isActive) {
-      return res.status(400).json({ error: 'Event is no longer active' });
-    }
-
-    // Check if event has already passed
-    if (new Date(event.eventDate) <= new Date()) {
-      return res.status(400).json({ error: 'Event has already occurred' });
-    }
-
-    // Check if user is already a participant
-    const isAlreadyJoined = event.participants.some(
-      participant => participant.uid === user.uid
-    );
-
+    // Check if already joined
+    const isAlreadyJoined = event.participants.some(p => p.uid === user.uid);
     if (isAlreadyJoined) {
       return res.status(400).json({ error: 'Already joined this event' });
     }
 
-    // Check participant limit
-    if (event.maxParticipants > 0 && event.participants.length >= event.maxParticipants) {
-      return res.status(400).json({ error: 'Event is full' });
-    }
-
-    // Add user to participants
-    event.participants.push({
-      uid: user.uid,
-      email: user.email,
-      displayName: user.displayName,
-      photoURL: user.photoURL || ''
-    });
-
-    await event.save();
-
-    // Add event to user's joinedEvents
-    await User.findOneAndUpdate(
-      { uid: user.uid },
-      { $addToSet: { joinedEvents: event._id } },
-      { new: true }
+    // Add participant
+    await mongoose.connection.db.collection('events').updateOne(
+      { _id: new mongoose.Types.ObjectId(id) },
+      { 
+        $push: { 
+          participants: {
+            uid: user.uid,
+            email: user.email,
+            displayName: user.displayName,
+            photoURL: user.photoURL || '',
+            joinedAt: new Date()
+          }
+        },
+        $set: { updatedAt: new Date() }
+      }
     );
 
-    res.status(200).json({
-      message: 'Successfully joined the event',
-      event
-    });
+    res.json({ message: 'Successfully joined the event' });
+
   } catch (error) {
     console.error('Error joining event:', error);
     res.status(500).json({ error: 'Failed to join event' });
   }
 });
 
-// Get events created by a specific user
+// Get user's created events
 router.get('/user/:uid', async (req, res) => {
   try {
     const { uid } = req.params;
     const { page = 1, limit = 12 } = req.query;
 
+    const MONGODB_URI = process.env.MONGODB_URI;
+    if (!MONGODB_URI) {
+      return res.status(500).json({ error: 'Database not configured' });
+    }
+
+    if (mongoose.connection.readyState !== 1) {
+      await mongoose.connect(MONGODB_URI);
+    }
+
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
 
-    const events = await Event.find({ 'creator.uid': uid, isActive: true })
-      .sort({ eventDate: 1, createdAt: -1 })
+    const events = await mongoose.connection.db.collection('events')
+      .find({ 
+        'creator.uid': uid,
+        isActive: true 
+      })
+      .sort({ eventDate: 1 })
       .skip(skip)
-      .limit(limitNum);
+      .limit(limitNum)
+      .toArray();
 
-    const total = await Event.countDocuments({ 'creator.uid': uid, isActive: true });
+    const total = await mongoose.connection.db.collection('events').countDocuments({ 
+      'creator.uid': uid,
+      isActive: true 
+    });
 
-    res.status(200).json({
+    res.json({
       events,
       total,
       currentPage: pageNum,
       totalPages: Math.ceil(total / limitNum)
     });
+
   } catch (error) {
     console.error('Error fetching user events:', error);
     res.status(500).json({ error: 'Failed to fetch user events' });
