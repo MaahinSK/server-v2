@@ -19,12 +19,12 @@ app.use(helmet());
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 100
 });
 app.use(limiter);
 
-// CORS configuration - allow all origins for testing
+// CORS configuration
 app.use(cors({
   origin: true,
   credentials: true,
@@ -34,35 +34,51 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// MongoDB connection
-const MONGODB_URI = process.env.MONGODB_URI;
+// MongoDB connection - Use direct connection string for now
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://maahin810:2NwOhLuR2Kt2ncL4@cluster0.xnczrsy.mongodb.net/helping-hands?retryWrites=true&w=majority';
 
-console.log('🔧 Environment check:', {
-  nodeEnv: process.env.NODE_ENV,
-  hasMongoURI: !!MONGODB_URI,
-  mongoURILength: MONGODB_URI ? MONGODB_URI.length : 0
-});
+console.log('🔧 MongoDB Configuration:');
+console.log('   - Using MONGODB_URI from env:', !!process.env.MONGODB_URI);
+console.log('   - Environment:', process.env.NODE_ENV);
 
-if (MONGODB_URI) {
-  mongoose.connect(MONGODB_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  })
-  .then(() => console.log('✅ Connected to MongoDB'))
-  .catch((error) => {
-    console.error('❌ MongoDB connection error:', error.message);
-  });
-} else {
-  console.log('⚠️  MongoDB URI not provided');
+// Connect to MongoDB
+async function connectDB() {
+  try {
+    console.log('🔄 Connecting to MongoDB...');
+    
+    await mongoose.connect(MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
+    });
+    
+    console.log('✅ MongoDB connected successfully!');
+    console.log('   - Database:', mongoose.connection.db.databaseName);
+    console.log('   - Host:', mongoose.connection.host);
+    
+  } catch (error) {
+    console.error('❌ MongoDB connection failed:');
+    console.error('   - Error:', error.message);
+    console.error('   - Code:', error.code);
+    
+    // Don't exit the process in Vercel environment
+    if (process.env.NODE_ENV !== 'production') {
+      process.exit(1);
+    }
+  }
 }
+
+// Start database connection
+connectDB();
 
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/users', userRoutes);
 
-// Enhanced Health check endpoint with database status
-app.get('/api/health', async (req, res) => {
+// Health check endpoint
+app.get('/api/health', (req, res) => {
   const connectionStates = {
     0: 'disconnected',
     1: 'connected',
@@ -73,32 +89,59 @@ app.get('/api/health', async (req, res) => {
   const dbState = mongoose.connection.readyState;
   const dbStatus = connectionStates[dbState] || 'unknown';
   
-  // Test database operation if connected
-  let dbOperation = 'not_tested';
-  if (dbState === 1) {
-    try {
-      const User = await import('./models/User.js');
-      const userCount = await User.default.countDocuments();
-      dbOperation = `working (${userCount} users)`;
-    } catch (error) {
-      dbOperation = `error: ${error.message}`;
-    }
-  }
-
   res.status(200).json({ 
     status: 'OK', 
     message: 'Server is running',
     database: {
       connection: dbStatus,
       readyState: dbState,
-      operation: dbOperation
+      mongoURIConfigured: !!process.env.MONGODB_URI,
+      usingFallback: !process.env.MONGODB_URI
     },
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV
   });
 });
 
-// Root endpoint with database status
+// Test database operations
+app.get('/api/test-db', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ 
+        error: 'Database not connected',
+        readyState: mongoose.connection.readyState 
+      });
+    }
+
+    // Test insert
+    const testDoc = {
+      test: true,
+      message: 'Database test from Vercel',
+      timestamp: new Date(),
+      environment: process.env.NODE_ENV
+    };
+    
+    const result = await mongoose.connection.db.collection('vercelTests').insertOne(testDoc);
+    
+    res.json({
+      success: true,
+      message: 'Database test successful',
+      insertedId: result.insertedId,
+      database: mongoose.connection.db.databaseName,
+      connection: 'active'
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Database test failed',
+      message: error.message,
+      readyState: mongoose.connection.readyState
+    });
+  }
+});
+
+// Root endpoint
 app.get('/', (req, res) => {
   const connectionStates = {
     0: 'disconnected',
@@ -113,24 +156,6 @@ app.get('/', (req, res) => {
     message: 'Helping Hands Server API',
     version: '1.0.0',
     database: dbStatus,
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Debug endpoint for database status
-app.get('/api/debug/db-status', (req, res) => {
-  const connectionStates = {
-    0: 'disconnected',
-    1: 'connected',
-    2: 'connecting',
-    3: 'disconnecting'
-  };
-  
-  res.json({
-    mongooseState: connectionStates[mongoose.connection.readyState],
-    mongooseReadyState: mongoose.connection.readyState,
-    mongoURIConfigured: !!process.env.MONGODB_URI,
-    mongoURILength: process.env.MONGODB_URI ? process.env.MONGODB_URI.length : 0,
     environment: process.env.NODE_ENV,
     timestamp: new Date().toISOString()
   });
