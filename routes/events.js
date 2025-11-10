@@ -112,7 +112,7 @@ router.post('/', async (req, res) => {
       title,
       description,
       eventType,
-      thumbnail,
+      thumbnail: thumbnail || '',
       location,
       eventDate: new Date(eventDate),
       creator: {
@@ -336,7 +336,7 @@ router.put('/:id', async (req, res) => {
       title: updateData.title,
       description: updateData.description,
       eventType: updateData.eventType,
-      thumbnail: updateData.thumbnail,
+      thumbnail: updateData.thumbnail || '',
       location: updateData.location,
       eventDate: new Date(updateData.eventDate),
       maxParticipants: parseInt(updateData.maxParticipants) || 0,
