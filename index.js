@@ -11,10 +11,14 @@ app.set('trust proxy', 1);
 // Security middleware
 app.use(helmet());
 
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginEmbedderPolicy: false
+}));
 // CORS configuration
 app.use(cors({
-  origin: true,
-  credentials: true,
+  origin: '*',
+  credentials: true
 }));
 
 // Body parsing middleware
